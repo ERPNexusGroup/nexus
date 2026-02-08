@@ -1,0 +1,29 @@
+[project]
+name = "nexus"
+version = "0.1.0"
+description = "CLI oficial para ERP NEXUS - creación e instalación de módulos"
+authors = [{name = "ERP NEXUS Team", email = "team@erp-nexus.org"}]
+requires-python = ">=3.11"
+license = {text = "GPL-3.0-or-later"}
+readme = "README.md"
+dependencies = [
+    "sdk @git+https://github.com/ERPNexusGroup/sdk-nexus.git",
+    "click>=8.1.7",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+nexus = "nexus.cli:cli"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "ruff>=0.3.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nexus"]
