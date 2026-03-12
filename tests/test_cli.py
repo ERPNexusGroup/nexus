@@ -126,3 +126,122 @@ def test_install_dry_run_and_registry_export_import(tmp_path: Path) -> None:
     )
     assert list_result.exit_code == 0
     assert "demo_module" in list_result.output
+
+
+def test_install_missing_dependency(tmp_path: Path) -> None:
+    base = tmp_path / "components"
+    base.mkdir()
+
+    comp_a = base / "core_auth"
+    comp_b = base / "core_users"
+    comp_a.mkdir()
+    comp_b.mkdir()
+
+    _write_meta(comp_a, name="core_auth")
+    # core_users depends on core_auth, but we will install only core_users
+    _write_meta(comp_b, name="core_users")
+    (comp_b / "__meta__.py").write_text(
+        (comp_b / "__meta__.py").read_text(encoding="utf-8")
+        + 'depends = ["core_auth"]\n',
+        encoding="utf-8",
+    )
+
+    install_base = tmp_path / "installed"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["install", str(comp_b), "--install-path", str(install_base)],
+    )
+    assert result.exit_code == 1
+
+
+def test_catalog_stub(tmp_path: Path) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        '{"items":[{"technical_name":"core_auth","description":"Auth core","versions":[{"version":"0.1.0","source":"https://example.com"}]}]}',
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["catalog", "list", "--source", str(catalog)],
+    )
+    assert result.exit_code == 0
+    assert "core_auth" in result.output
+
+
+def test_catalog_update_stub(tmp_path: Path) -> None:
+    runner = CliRunner()
+    out = tmp_path / "catalog.json"
+    result = runner.invoke(
+        cli,
+        ["catalog", "update", "--output", str(out)],
+    )
+    assert result.exit_code == 0
+    assert out.exists()
+
+
+def test_install_from_catalog_with_package_map(tmp_path: Path) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        '{"items":[{"technical_name":"core_auth","description":"Auth core","versions":[{"version":"0.1.0","source":"https://example.com"}]}]}',
+        encoding="utf-8",
+    )
+
+    pkg = tmp_path / "core_auth"
+    pkg.mkdir()
+    _write_meta(pkg, name="core_auth")
+
+    install_base = tmp_path / "installed"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "install",
+            "catalog:core_auth",
+            "--catalog-source",
+            str(catalog),
+            "--package",
+            f"core_auth={pkg}",
+            "--install-path",
+            str(install_base),
+        ],
+    )
+    assert result.exit_code == 0
+    assert (install_base / "core_auth").exists()
+
+
+def test_install_from_catalog_download(tmp_path: Path) -> None:
+    # create a local zip package
+    pkg_dir = tmp_path / "core_auth"
+    pkg_dir.mkdir()
+    _write_meta(pkg_dir, name="core_auth")
+    zip_path = tmp_path / "core_auth.zip"
+    import zipfile
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.write(pkg_dir / "__meta__.py", arcname="core_auth/__meta__.py")
+
+    zip_url = "file:///" + zip_path.as_posix()
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(
+        f'{{"items":[{{"technical_name":"core_auth","description":"Auth core","versions":[{{"version":"0.1.0","source":"{zip_url}"}}]}}]}}',
+        encoding="utf-8",
+    )
+
+    install_base = tmp_path / "installed"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "install",
+            "catalog:core_auth",
+            "--catalog-source",
+            str(catalog),
+            "--install-path",
+            str(install_base),
+        ],
+    )
+    assert result.exit_code == 0
+    assert (install_base / "core_auth").exists()

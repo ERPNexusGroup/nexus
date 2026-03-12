@@ -88,22 +88,60 @@ Comandos disponibles:
 - `nexus info` - Ver detalles de un componente instalado
 - `nexus registry export` - Exportar registry local a JSON
 - `nexus registry import` - Importar registry desde JSON
+- `nexus registry add` - Registrar un catálogo
+- `nexus registry list` - Listar catálogos
+- `nexus registry remove` - Eliminar catálogo
+- `nexus registry set-default` - Establecer catálogo por defecto
 
 Opciones útiles:
 - `nexus install --dry-run` - Muestra el plan de instalación sin ejecutar cambios
 
-## ⚙️ Modos (Self-hosted / SaaS)
-Por defecto funciona en modo `self_hosted` y opera offline.
+## 🧭 Catálogo (registry)
+Puedes consultar un catálogo local o remoto (URL):
+```bash
+nexus catalog list --source C:/ruta/catalog.json
+nexus catalog info core_auth --source C:/ruta/catalog.json
+nexus catalog update --output C:/ruta/catalog.json
+```
 
-Opciones:
-- `--mode self_hosted` (default)
-- `--mode saas` (preparado para catálogo remoto, sin fetch aún)
+Instalar desde catálogo (paquete local):
+```bash
+nexus install catalog:core_auth --catalog-source C:/ruta/catalog.json --package core_auth=C:/ruta/paquete
+```
 
-También puedes definir `NEXUS_MODE` o un archivo:
+Instalar descargando desde `source` (zip/tar):
+```bash
+nexus install catalog:core_auth --catalog-source C:/ruta/catalog.json
+```
+
+Formato esperado (versión B):
+```json
+{
+  "items": [
+    {
+      "technical_name": "core_auth",
+      "description": "Auth core",
+      "versions": [
+        { "version": "0.1.0", "source": "https://..." }
+      ]
+    }
+  ]
+}
+```
+
+## ⚙️ Configuración local
+Archivo opcional:
 `~/.nexus/config.json`
 ```json
 {
-  "mode": "self_hosted",
   "base_path": "C:/Users/tu_usuario/.nexus/components"
 }
+```
+
+## 📦 Registry de catálogos
+Puedes registrar catálogos remotos o locales:
+```bash
+nexus registry add --name default --type file --source C:/ruta/catalog.json --default
+nexus registry list
+nexus catalog list --registry default
 ```

@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "technical_name": "core_auth",
+      "description": "Auth core",
+      "versions": [
+        {
+          "version": "0.1.0",
+          "source": "https://example.com/core_auth-0.1.0.zip"
+        }
+      ]
+    },
+    {
+      "technical_name": "core_users",
+      "description": "Users core",
+      "versions": [
+        {
+          "version": "0.1.0",
+          "source": "https://example.com/core_users-0.1.0.zip"
+        }
+      ]
+    }
+  ]
+}

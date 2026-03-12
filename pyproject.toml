@@ -16,7 +16,7 @@ dependencies = [
 nexus = "nexus.cli:cli"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "ruff>=0.3.0"]
+dev = ["pytest>=8.0.0"]
 
 [build-system]
 requires = ["hatchling"]
@@ -27,3 +27,4 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nexus"]
+include = ["src/nexus/catalogs/*.json"]

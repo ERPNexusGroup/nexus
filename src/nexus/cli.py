@@ -17,8 +17,18 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from sdk.exceptions import InstallationError, ValidationError
+from sdk.dependency.errors import MissingDependencyError, VersionConflictError, CircularDependencyError
 from sdk.installer import TransactionalInstaller
 from sdk.validator import ComponentValidator
+from nexus.catalog import load_catalog_from_source, update_catalog_stub, download_and_extract, CatalogError
+from nexus.registry import (
+    add_registry,
+    get_registry,
+    list_registries,
+    remove_registry,
+    set_default,
+    RegistryEntry,
+)
 
 console = Console()
 
@@ -27,15 +37,9 @@ console = Console()
     context_settings={"help_option_names": ["-h", "--help"]},
     invoke_without_command=True
 )
-@click.option(
-    "--mode",
-    type=click.Choice(["self_hosted", "saas"]),
-    default=None,
-    help="Modo de operación (default: self_hosted)",
-)
 @click.version_option(version=__version__, prog_name="nexus")
 @click.pass_context
-def cli(ctx, mode: str | None):
+def cli(ctx):
     """
     🚀 nexus - CLI oficial para ERP NEXUS
 
@@ -54,7 +58,7 @@ def cli(ctx, mode: str | None):
 
     Documentación completa: https://docs.erp-nexus.org/cli
     """
-    cfg = load_config(override_mode=mode)
+    cfg = load_config()
     ctx.obj = {"config": cfg}
 
     if ctx.invoked_subcommand is None:
@@ -63,7 +67,6 @@ def cli(ctx, mode: str | None):
             f"[bold cyan]ERP NEXUS CLI v{__version__}[/bold cyan]\n\n"
             f"🐍 Python: {__import__('sys').version.split()[0]}\n"
             f"📅 Iniciado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            f"[bold]Modo:[/bold] {cfg.mode}\n"
             f"[bold]¡Listo para crear módulos en < 60 segundos![/bold]",
             title="✨ nexus - Sistema Modular ERP",
             border_style="cyan"
@@ -432,13 +435,30 @@ cli.add_command(validate)
 
 
 @click.command()
-@click.argument("paths", nargs=-1, type=click.Path(exists=True))
+@click.argument("paths", nargs=-1, type=str)
 @click.option("--install-path", "-i", default=None,
               help="Ruta base de instalación (default: ~/.nexus/components)")
 @click.option("--dry-run", is_flag=True,
               help="Mostrar plan de instalación sin ejecutar cambios")
+@click.option("--catalog-source", default=None,
+              help="Ruta/URL de catálogo JSON (para items catalog:*)")
+@click.option("--registry", "registry_name", default=None,
+              help="Registry a usar (por nombre)")
+@click.option("--download-dir", default=None,
+              help="Directorio de descarga/extracción para paquetes remotos")
+@click.option("--package", "package_map", multiple=True,
+              help="Mapa de paquete local: name=path (para items catalog:*)")
 @click.pass_context
-def install(ctx, paths: tuple[str, ...], install_path: str | None, dry_run: bool):
+def install(
+    ctx,
+    paths: tuple[str, ...],
+    install_path: str | None,
+    dry_run: bool,
+    catalog_source: str | None,
+    registry_name: str | None,
+    download_dir: str | None,
+    package_map: tuple[str, ...],
+):
     """
     Instala uno o varios componentes con rollback transaccional.
     """
@@ -452,10 +472,65 @@ def install(ctx, paths: tuple[str, ...], install_path: str | None, dry_run: bool
     storage = FilesystemStorage(base_path=base_path)
     installer = TransactionalInstaller(storage)
 
-    component_paths = [Path(p) for p in paths]
+    package_lookup: dict[str, Path] = {}
+    for item in package_map:
+        if "=" not in item:
+            console.print(f"[red]✗ Formato inválido en --package:[/red] {item}")
+            sys.exit(1)
+        name, path = item.split("=", 1)
+        package_lookup[name.strip()] = Path(path.strip())
+
+    component_paths = []
+    for p in paths:
+        if p.startswith("catalog:"):
+            technical_name = p.split("catalog:", 1)[1]
+            try:
+                registry = get_registry(registry_name)
+                source = catalog_source or (registry.source if registry else None)
+                if not source:
+                    raise CatalogError("No hay registry configurado ni --catalog-source.")
+                items = load_catalog_from_source(source)
+            except CatalogError as e:
+                console.print(f"[yellow]{e}[/yellow]")
+                sys.exit(1)
+            item = next((i for i in items if i.technical_name == technical_name), None)
+            if not item:
+                console.print(f"[red]✗ No encontrado en catálogo:[/red] {technical_name}")
+                sys.exit(1)
+            pkg_path = package_lookup.get(technical_name)
+            if not pkg_path:
+                if item.source:
+                    try:
+                        pkg_path = download_and_extract(
+                            item.source,
+                            technical_name,
+                            Path(download_dir) if download_dir else None,
+                        )
+                    except CatalogError as e:
+                        console.print(f"[red]✗ {e}[/red]")
+                        sys.exit(1)
+                else:
+                    console.print(
+                        f"[red]✗ Falta --package {technical_name}=RUTA[/red]\n"
+                        f"Ej: nexus install catalog:{technical_name} "
+                        f"--catalog-source C:/ruta/catalog.json "
+                        f"--package {technical_name}=C:/ruta/paquete"
+                    )
+                    sys.exit(1)
+            component_paths.append(pkg_path)
+        else:
+            path_obj = Path(p)
+            if not path_obj.exists():
+                console.print(f"[red]✗ Ruta no encontrada:[/red] {p}")
+                sys.exit(1)
+            component_paths.append(path_obj)
 
     try:
         plan = installer.install_plan(component_paths)
+
+        console.print(f"[bold]Plan:[/bold] {len(plan.install_order)} componente(s)")
+        if plan.optional_skipped:
+            console.print(f"[yellow]Dependencias opcionales omitidas:[/yellow] {', '.join(plan.optional_skipped)}")
 
         if dry_run:
             table = Table(title="Plan de Instalación (Dry Run)", show_header=True, header_style="bold cyan")
@@ -464,8 +539,6 @@ def install(ctx, paths: tuple[str, ...], install_path: str | None, dry_run: bool
             for idx, name in enumerate(plan.install_order, start=1):
                 table.add_row(str(idx), name)
             console.print(table)
-            if plan.optional_skipped:
-                console.print(f"[yellow]Dependencias opcionales omitidas:[/yellow] {', '.join(plan.optional_skipped)}")
             return
 
         results = []
@@ -483,9 +556,31 @@ def install(ctx, paths: tuple[str, ...], install_path: str | None, dry_run: bool
             table.add_row(r.name, r.version, str(r.installed_path))
         console.print(table)
 
-        if plan.optional_skipped:
-            console.print(f"[yellow]Dependencias opcionales omitidas:[/yellow] {', '.join(plan.optional_skipped)}")
-
+    except MissingDependencyError as e:
+        console.print(Panel.fit(
+            f"[red]❌ Dependencia faltante[/red]\n\n{e}\n\n"
+            f"[yellow]Solución:[/yellow] instala primero las dependencias requeridas.\n"
+            f"Ej: [green]nexus install /ruta/dep /ruta/componente[/green]\n"
+            f"O revisa el plan con [green]--dry-run[/green].",
+            title="Dependencias Incompletas",
+            border_style="red"
+        ))
+        sys.exit(1)
+    except VersionConflictError as e:
+        console.print(Panel.fit(
+            f"[red]❌ Conflicto de versión[/red]\n\n{e}\n\n"
+            f"[yellow]Solución:[/yellow] actualiza la dependencia a una versión compatible.",
+            title="Conflicto de Versiones",
+            border_style="red"
+        ))
+        sys.exit(1)
+    except CircularDependencyError as e:
+        console.print(Panel.fit(
+            f"[red]❌ Dependencia circular[/red]\n\n{e}",
+            title="Ciclo Detectado",
+            border_style="red"
+        ))
+        sys.exit(1)
     except InstallationError as e:
         console.print(Panel.fit(
             f"[red]❌ Error de instalación[/red]\n\n{e}",
@@ -639,6 +734,50 @@ def registry_import(ctx, input_path: str, overwrite: bool, install_path: str | N
         console.print(f"[yellow]Omitidos:[/yellow] {skipped}")
 
 
+@registry.command("add")
+@click.option("--name", required=True)
+@click.option("--type", "registry_type", required=True, type=click.Choice(["file", "url", "github"]))
+@click.option("--source", required=True)
+@click.option("--default", "is_default", is_flag=True)
+def registry_add(name: str, registry_type: str, source: str, is_default: bool):
+    add_registry(RegistryEntry(name=name, type=registry_type, source=source, is_default=is_default))
+    console.print(f"[green]✓ Registry agregado:[/green] {name}")
+
+
+@registry.command("remove")
+@click.option("--name", required=True)
+def registry_remove(name: str):
+    if remove_registry(name):
+        console.print(f"[green]✓ Registry eliminado:[/green] {name}")
+    else:
+        console.print(f"[yellow]No existe registry:[/yellow] {name}")
+
+
+@registry.command("list")
+def registry_list():
+    regs = list_registries()
+    if not regs:
+        console.print("[yellow]No hay registries configurados.[/yellow]")
+        return
+    table = Table(title="Registries", show_header=True, header_style="bold cyan")
+    table.add_column("Name")
+    table.add_column("Type")
+    table.add_column("Source")
+    table.add_column("Default")
+    for r in regs:
+        table.add_row(r.name, r.type, r.source, "yes" if r.is_default else "")
+    console.print(table)
+
+
+@registry.command("set-default")
+@click.option("--name", required=True)
+def registry_set_default(name: str):
+    if set_default(name):
+        console.print(f"[green]✓ Default registry:[/green] {name}")
+    else:
+        console.print(f"[yellow]No existe registry:[/yellow] {name}")
+
+
 @click.command()
 @click.argument("name")
 @click.option("--install-path", "-i", default=None,
@@ -665,11 +804,88 @@ def info(ctx, name: str, install_path: str | None):
     console.print(Panel.fit(table, title="Detalles del Componente", border_style="cyan"))
 
 
+@click.group()
+def catalog():
+    """Catálogo remoto (stub)."""
+    pass
+
+
+@catalog.command("list")
+@click.option("--registry", "registry_name", default=None, help="Registry a usar")
+@click.option("--source", default=None, help="Ruta/URL directa (override)")
+@click.pass_context
+def catalog_list(ctx, registry_name: str | None, source: str | None):
+    try:
+        registry = get_registry(registry_name)
+        src = source or (registry.source if registry else None)
+        if not src:
+            raise CatalogError("No hay registry configurado ni --source.")
+        items = load_catalog_from_source(src)
+    except CatalogError as e:
+        console.print(f"[yellow]{e}[/yellow]")
+        return
+
+    if not items:
+        console.print("[yellow]Catálogo vacío.[/yellow]")
+        return
+
+    table = Table(title="Catálogo", show_header=True, header_style="bold cyan")
+    table.add_column("Technical Name")
+    table.add_column("Version")
+    table.add_column("Description")
+    table.add_column("Source")
+    for item in items:
+        table.add_row(item.technical_name, item.version, item.description or "", item.source or "")
+    console.print(table)
+
+
+@catalog.command("info")
+@click.argument("technical_name")
+@click.option("--registry", "registry_name", default=None, help="Registry a usar")
+@click.option("--source", default=None, help="Ruta/URL directa (override)")
+@click.pass_context
+def catalog_info(ctx, technical_name: str, registry_name: str | None, source: str | None):
+    try:
+        registry = get_registry(registry_name)
+        src = source or (registry.source if registry else None)
+        if not src:
+            raise CatalogError("No hay registry configurado ni --source.")
+        items = load_catalog_from_source(src)
+    except CatalogError as e:
+        console.print(f"[yellow]{e}[/yellow]")
+        return
+
+    item = next((i for i in items if i.technical_name == technical_name), None)
+    if not item:
+        console.print(f"[yellow]No encontrado en catálogo:[/yellow] {technical_name}")
+        return
+
+    table = Table(show_header=False, box=None)
+    table.add_row("[bold]technical_name[/bold]", item.technical_name)
+    table.add_row("[bold]version[/bold]", item.version)
+    if item.description:
+        table.add_row("[bold]description[/bold]", item.description)
+    if item.source:
+        table.add_row("[bold]source[/bold]", item.source)
+    console.print(Panel.fit(table, title="Catálogo", border_style="cyan"))
+
+
+@catalog.command("update")
+@click.option("--output", "-o", default=None, help="Ruta destino del catálogo JSON")
+def catalog_update(output: str | None):
+    """
+    Actualiza el catálogo remoto (stub).
+    """
+    path = update_catalog_stub(Path(output) if output else None)
+    console.print(f"[green]✓ Catálogo actualizado:[/green] {path}")
+
+
 cli.add_command(install)
 cli.add_command(uninstall)
 cli.add_command(list_components)
 cli.add_command(info)
 cli.add_command(registry)
+cli.add_command(catalog)
 
 if __name__ == "__main__":
     cli()
