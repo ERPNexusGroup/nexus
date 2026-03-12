@@ -64,6 +64,16 @@ validation_dni_ec/
 └── __meta__.py          # Sin estructura de directorios (solo metadata)
 ```
 
+### Instalar directamente en el ERP
+Instala módulos en `erp-nexus/modules` y luego sincroniza en el ERP:
+```bash
+nexus install ./mi_modulo --target erp
+```
+Luego en el ERP:
+```bash
+uv run python manage.py sync_modules
+```
+
 ## 🔒 Seguridad Garantizada
 El CLI nunca ejecuta código de `__meta__.py`. Usa el AST parser seguro del SDK:
 - ✅ Solo extrae literales (strings, números, booleanos, listas/dict de literales)
@@ -95,6 +105,7 @@ Comandos disponibles:
 
 Opciones útiles:
 - `nexus install --dry-run` - Muestra el plan de instalación sin ejecutar cambios
+- `nexus install --target erp` - Atajo para instalar en `erp-nexus/modules`
 
 ## 🧭 Catálogo (registry)
 Puedes consultar un catálogo local o remoto (URL):

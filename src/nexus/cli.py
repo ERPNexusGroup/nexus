@@ -5,6 +5,7 @@ Minimalista, offline-first, startup < 150ms
 """
 # Imports adicionales para comandos
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -438,6 +439,8 @@ cli.add_command(validate)
 @click.argument("paths", nargs=-1, type=str)
 @click.option("--install-path", "-i", default=None,
               help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.option("--target", default=None, type=click.Choice(["erp"]),
+              help="Atajo de destino (erp => erp-nexus/modules)")
 @click.option("--dry-run", is_flag=True,
               help="Mostrar plan de instalación sin ejecutar cambios")
 @click.option("--catalog-source", default=None,
@@ -453,6 +456,7 @@ def install(
     ctx,
     paths: tuple[str, ...],
     install_path: str | None,
+    target: str | None,
     dry_run: bool,
     catalog_source: str | None,
     registry_name: str | None,
@@ -467,6 +471,12 @@ def install(
         sys.exit(1)
 
     base_path = Path(install_path) if install_path else None
+    if base_path is None and target == "erp":
+        env_path = os.getenv("ERP_MODULES_PATH")
+        if env_path:
+            base_path = Path(env_path)
+        else:
+            base_path = (Path.cwd().parent / "erp-nexus" / "modules").resolve()
     if base_path is None and isinstance(ctx.obj, dict):
         base_path = ctx.obj["config"].base_path
     storage = FilesystemStorage(base_path=base_path)
@@ -555,6 +565,8 @@ def install(
         for r in results:
             table.add_row(r.name, r.version, str(r.installed_path))
         console.print(table)
+        if target == "erp" or install_path:
+            console.print("[cyan]Siguiente paso:[/cyan] ejecutar `python manage.py sync_modules` en erp-nexus")
 
     except MissingDependencyError as e:
         console.print(Panel.fit(
