@@ -81,6 +81,23 @@ El CLI nunca ejecuta código de `__meta__.py`. Usa el AST parser seguro del SDK:
 | Tiempo validación | 80ms |
 
 ## 📚 Próximos Comandos (Fase 1C)
+Comandos disponibles:
 - `nexus install` - Instalación con rollback transaccional
 - `nexus uninstall` - Desinstalación limpia
 - `nexus list` - Listar componentes instalados
+
+## ⚙️ Modos (Self-hosted / SaaS)
+Por defecto funciona en modo `self_hosted` y opera offline.
+
+Opciones:
+- `--mode self_hosted` (default)
+- `--mode saas` (preparado para catálogo remoto, sin fetch aún)
+
+También puedes definir `NEXUS_MODE` o un archivo:
+`~/.nexus/config.json`
+```json
+{
+  "mode": "self_hosted",
+  "base_path": "C:/Users/tu_usuario/.nexus/components"
+}
+```

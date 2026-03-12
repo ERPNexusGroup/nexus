@@ -10,11 +10,13 @@ from pathlib import Path
 
 import click
 from nexus import __version__
+from nexus.config import load_config
 from nexus.storage.filesystem import FilesystemStorage
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from sdk.exceptions import ValidationError
+from sdk.exceptions import InstallationError, ValidationError
+from sdk.installer import TransactionalInstaller
 from sdk.validator import ComponentValidator
 
 console = Console()
@@ -24,9 +26,15 @@ console = Console()
     context_settings={"help_option_names": ["-h", "--help"]},
     invoke_without_command=True
 )
+@click.option(
+    "--mode",
+    type=click.Choice(["self_hosted", "saas"]),
+    default=None,
+    help="Modo de operación (default: self_hosted)",
+)
 @click.version_option(version=__version__, prog_name="nexus")
 @click.pass_context
-def cli(ctx):
+def cli(ctx, mode: str | None):
     """
     🚀 nexus - CLI oficial para ERP NEXUS
 
@@ -45,12 +53,16 @@ def cli(ctx):
 
     Documentación completa: https://docs.erp-nexus.org/cli
     """
+    cfg = load_config(override_mode=mode)
+    ctx.obj = {"config": cfg}
+
     if ctx.invoked_subcommand is None:
         # Mostrar ayuda inicial si no se especifica comando
         console.print(Panel.fit(
             f"[bold cyan]ERP NEXUS CLI v{__version__}[/bold cyan]\n\n"
             f"🐍 Python: {__import__('sys').version.split()[0]}\n"
             f"📅 Iniciado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            f"[bold]Modo:[/bold] {cfg.mode}\n"
             f"[bold]¡Listo para crear módulos en < 60 segundos![/bold]",
             title="✨ nexus - Sistema Modular ERP",
             border_style="cyan"
@@ -349,7 +361,8 @@ registry_flags = {{
 @click.option("--strict", "-s", is_flag=True, help="Modo estricto (warnings como errores)")
 def validate(path: str, strict: bool):
     """
-    Valida meta.py usando AST parser seguro (sin ejecutar código)
+    Valida __meta__.py usando AST parser seguro (sin ejecutar código)
+
     Ejemplos:
       nexus validate ./hotel_reservations
       nexus validate ./mi_modulo --strict
@@ -385,17 +398,17 @@ def validate(path: str, strict: bool):
         table.add_row("[bold]Package Type[/bold]", metadata.package_type)
         table.add_row("[bold]Python[/bold]", metadata.python)
         table.add_row("[bold]ERP Version[/bold]", metadata.erp_version)
-        console.print(table)
 
-        # Mostrar autores si existen
         if metadata.authors:
-            authors = ", ".join([a["name"] for a in metadata.authors])
-            console.print(f"\n[bold]Autores:[/bold] {authors}")
+            authors_list = ", ".join([a.name for a in metadata.authors])
+            table.add_row("[bold]Autores[/bold]", authors_list)
+
+        console.print(table)
 
         # Mostrar dependencias si existen
         if metadata.depends:
             deps = ", ".join(metadata.depends)
-            console.print(f"[bold]Dependencias:[/bold] {deps}")
+            console.print(f"\n[bold]Dependencias:[/bold] {deps}")
 
         console.print("\n[green]✓ El componente es válido y puede instalarse[/green]")
 
@@ -415,6 +428,114 @@ def validate(path: str, strict: bool):
 # Registrar comandos en el grupo CLI
 cli.add_command(create)
 cli.add_command(validate)
+
+
+@click.command()
+@click.argument("paths", nargs=-1, type=click.Path(exists=True))
+@click.option("--install-path", "-i", default=None,
+              help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.pass_context
+def install(ctx, paths: tuple[str, ...], install_path: str | None):
+    """
+    Instala uno o varios componentes con rollback transaccional.
+    """
+    if not paths:
+        console.print("[red]✗ Debes indicar al menos una ruta[/red]")
+        sys.exit(1)
+
+    base_path = Path(install_path) if install_path else None
+    if base_path is None and isinstance(ctx.obj, dict):
+        base_path = ctx.obj["config"].base_path
+    storage = FilesystemStorage(base_path=base_path)
+    installer = TransactionalInstaller(storage)
+
+    component_paths = [Path(p) for p in paths]
+
+    try:
+        results = installer.install_many(component_paths)
+        table = Table(title="Componentes Instalados", show_header=True, header_style="bold cyan")
+        table.add_column("Name")
+        table.add_column("Version")
+        table.add_column("Path")
+        for r in results:
+            table.add_row(r.name, r.version, str(r.installed_path))
+        console.print(table)
+    except InstallationError as e:
+        console.print(Panel.fit(
+            f"[red]❌ Error de instalación[/red]\n\n{e}",
+            title="Instalación Fallida",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@click.command()
+@click.argument("name")
+@click.option("--install-path", "-i", default=None,
+              help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.pass_context
+def uninstall(ctx, name: str, install_path: str | None):
+    """
+    Desinstala un componente por nombre.
+    """
+    base_path = Path(install_path) if install_path else None
+    if base_path is None and isinstance(ctx.obj, dict):
+        base_path = ctx.obj["config"].base_path
+    storage = FilesystemStorage(base_path=base_path)
+    installer = TransactionalInstaller(storage)
+
+    try:
+        installer.uninstall(name)
+        console.print(f"[green]✓ Desinstalado:[/green] {name}")
+    except InstallationError as e:
+        console.print(Panel.fit(
+            f"[red]❌ Error de desinstalación[/red]\n\n{e}",
+            title="Desinstalación Fallida",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@click.command(name="list")
+@click.option("--install-path", "-i", default=None,
+              help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.pass_context
+def list_components(ctx, install_path: str | None):
+    """
+    Lista componentes instalados desde el registry local.
+    """
+    base_path = Path(install_path) if install_path else None
+    if base_path is None and isinstance(ctx.obj, dict):
+        base_path = ctx.obj["config"].base_path
+    storage = FilesystemStorage(base_path=base_path)
+    items = storage.registry.list()
+
+    if not items:
+        console.print("[yellow]No hay componentes instalados.[/yellow]")
+        return
+
+    table = Table(title="Componentes Instalados", show_header=True, header_style="bold cyan")
+    table.add_column("Name")
+    table.add_column("Version")
+    table.add_column("Type")
+    table.add_column("Installed At")
+    table.add_column("Path")
+
+    for item in items:
+        table.add_row(
+            str(item.get("name", "")),
+            str(item.get("version", "")),
+            str(item.get("package_type", "")),
+            str(item.get("installed_at", "")),
+            str(item.get("path", "")),
+        )
+
+    console.print(table)
+
+
+cli.add_command(install)
+cli.add_command(uninstall)
+cli.add_command(list_components)
 
 if __name__ == "__main__":
     cli()

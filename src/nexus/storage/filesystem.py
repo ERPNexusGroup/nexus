@@ -2,6 +2,7 @@
 Implementación minimalista de StorageBackend para CLI
 Usa filesystem local + JSON registry (sin base de datos)
 """
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from sdk.contracts import StorageBackend
@@ -55,7 +56,7 @@ class FilesystemStorage(StorageBackend):
             "path": str(path.resolve()),
             "component_type": manifest.get("component_type", "module"),
             "package_type": manifest.get("package_type", "extension"),
-            "installed_at": "2024-05-22T10:00:00",
+            "installed_at": datetime.now(timezone.utc).isoformat(),
             "status": "active"
         })
     
