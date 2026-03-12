@@ -283,14 +283,11 @@ wheels = [
 
 [[package]]
 name = "sdk"
-version = "0.1.0"
-source = { git = "https://github.com/ERPNexusGroup/sdk-nexus.git#a50c8680955e317b43bd4a95303ea2d6cfeb17ac" }
+version = "1.0.0"
+source = { git = "https://github.com/ERPNexusGroup/sdk-nexus.git#7bd2e52fa58e4b3756f9f849adb28627c6785e03" }
 dependencies = [
-    { name = "packaging" },
     { name = "pydantic" },
-    { name = "rich" },
     { name = "semantic-version" },
-    { name = "typing-extensions" },
 ]
 
 [[package]]

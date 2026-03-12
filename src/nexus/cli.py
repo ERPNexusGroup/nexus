@@ -4,6 +4,7 @@ CLI oficial para ERP NEXUS
 Minimalista, offline-first, startup < 150ms
 """
 # Imports adicionales para comandos
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -434,8 +435,10 @@ cli.add_command(validate)
 @click.argument("paths", nargs=-1, type=click.Path(exists=True))
 @click.option("--install-path", "-i", default=None,
               help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.option("--dry-run", is_flag=True,
+              help="Mostrar plan de instalación sin ejecutar cambios")
 @click.pass_context
-def install(ctx, paths: tuple[str, ...], install_path: str | None):
+def install(ctx, paths: tuple[str, ...], install_path: str | None, dry_run: bool):
     """
     Instala uno o varios componentes con rollback transaccional.
     """
@@ -452,7 +455,26 @@ def install(ctx, paths: tuple[str, ...], install_path: str | None):
     component_paths = [Path(p) for p in paths]
 
     try:
-        results = installer.install_many(component_paths)
+        plan = installer.install_plan(component_paths)
+
+        if dry_run:
+            table = Table(title="Plan de Instalación (Dry Run)", show_header=True, header_style="bold cyan")
+            table.add_column("Order")
+            table.add_column("Component")
+            for idx, name in enumerate(plan.install_order, start=1):
+                table.add_row(str(idx), name)
+            console.print(table)
+            if plan.optional_skipped:
+                console.print(f"[yellow]Dependencias opcionales omitidas:[/yellow] {', '.join(plan.optional_skipped)}")
+            return
+
+        results = []
+        for name in plan.install_order:
+            source_path = plan.paths_by_name.get(name)
+            if source_path is None:
+                raise InstallationError(f"Plan inválido: no se encontró ruta para '{name}'")
+            results.append(installer.install(source_path))
+
         table = Table(title="Componentes Instalados", show_header=True, header_style="bold cyan")
         table.add_column("Name")
         table.add_column("Version")
@@ -460,6 +482,10 @@ def install(ctx, paths: tuple[str, ...], install_path: str | None):
         for r in results:
             table.add_row(r.name, r.version, str(r.installed_path))
         console.print(table)
+
+        if plan.optional_skipped:
+            console.print(f"[yellow]Dependencias opcionales omitidas:[/yellow] {', '.join(plan.optional_skipped)}")
+
     except InstallationError as e:
         console.print(Panel.fit(
             f"[red]❌ Error de instalación[/red]\n\n{e}",
@@ -533,9 +559,117 @@ def list_components(ctx, install_path: str | None):
     console.print(table)
 
 
+@click.group()
+def registry():
+    """Operaciones sobre el registry local."""
+    pass
+
+
+@registry.command("export")
+@click.option("--output", "-o", default="registry-export.json",
+              help="Archivo destino (default: registry-export.json)")
+@click.option("--install-path", "-i", default=None,
+              help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.pass_context
+def registry_export(ctx, output: str, install_path: str | None):
+    base_path = Path(install_path) if install_path else None
+    if base_path is None and isinstance(ctx.obj, dict):
+        base_path = ctx.obj["config"].base_path
+    storage = FilesystemStorage(base_path=base_path)
+
+    registry_path = storage.registry_path
+    if not registry_path.exists():
+        console.print("[yellow]No existe registry para exportar.[/yellow]")
+        return
+
+    data = registry_path.read_text(encoding="utf-8")
+    Path(output).write_text(data, encoding="utf-8")
+    console.print(f"[green]✓ Exportado:[/green] {output}")
+
+
+@registry.command("import")
+@click.option("--input", "-i", "input_path", required=True,
+              help="Archivo JSON de registry a importar")
+@click.option("--overwrite", is_flag=True,
+              help="Sobrescribir entradas existentes")
+@click.option("--install-path", "-p", default=None,
+              help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.pass_context
+def registry_import(ctx, input_path: str, overwrite: bool, install_path: str | None):
+    base_path = Path(install_path) if install_path else None
+    if base_path is None and isinstance(ctx.obj, dict):
+        base_path = ctx.obj["config"].base_path
+    storage = FilesystemStorage(base_path=base_path)
+
+    src = Path(input_path)
+    if not src.exists():
+        console.print(f"[red]✗ Archivo no encontrado:[/red] {input_path}")
+        sys.exit(1)
+
+    try:
+        payload = json.loads(src.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        console.print(f"[red]✗ JSON inválido:[/red] {e}")
+        sys.exit(1)
+
+    items = []
+    if isinstance(payload, dict) and "components" in payload:
+        items = list(payload.get("components", {}).values())
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        console.print("[red]✗ Formato de registry no soportado[/red]")
+        sys.exit(1)
+
+    imported = 0
+    skipped = 0
+    for item in items:
+        name = item.get("name")
+        if not name:
+            skipped += 1
+            continue
+        if storage.registry.get(name) and not overwrite:
+            skipped += 1
+            continue
+        storage.registry.register(name, item)
+        imported += 1
+
+    console.print(f"[green]✓ Importados:[/green] {imported}")
+    if skipped:
+        console.print(f"[yellow]Omitidos:[/yellow] {skipped}")
+
+
+@click.command()
+@click.argument("name")
+@click.option("--install-path", "-i", default=None,
+              help="Ruta base de instalación (default: ~/.nexus/components)")
+@click.pass_context
+def info(ctx, name: str, install_path: str | None):
+    """
+    Muestra información detallada de un componente instalado.
+    """
+    base_path = Path(install_path) if install_path else None
+    if base_path is None and isinstance(ctx.obj, dict):
+        base_path = ctx.obj["config"].base_path
+    storage = FilesystemStorage(base_path=base_path)
+
+    item = storage.registry.get(name)
+    if not item:
+        console.print(f"[yellow]No se encontró el componente:[/yellow] {name}")
+        return
+
+    table = Table(show_header=False, box=None)
+    for key in ["name", "version", "component_type", "package_type", "installed_at", "status", "path"]:
+        if key in item:
+            table.add_row(f"[bold]{key}[/bold]", str(item.get(key, "")))
+    console.print(Panel.fit(table, title="Detalles del Componente", border_style="cyan"))
+
+
 cli.add_command(install)
 cli.add_command(uninstall)
 cli.add_command(list_components)
+cli.add_command(info)
+cli.add_command(registry)
 
 if __name__ == "__main__":
     cli()

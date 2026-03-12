@@ -85,6 +85,12 @@ Comandos disponibles:
 - `nexus install` - Instalación con rollback transaccional
 - `nexus uninstall` - Desinstalación limpia
 - `nexus list` - Listar componentes instalados
+- `nexus info` - Ver detalles de un componente instalado
+- `nexus registry export` - Exportar registry local a JSON
+- `nexus registry import` - Importar registry desde JSON
+
+Opciones útiles:
+- `nexus install --dry-run` - Muestra el plan de instalación sin ejecutar cambios
 
 ## ⚙️ Modos (Self-hosted / SaaS)
 Por defecto funciona en modo `self_hosted` y opera offline.
