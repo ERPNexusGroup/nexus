@@ -1,158 +1,77 @@
-# 🚀 nexus - CLI Oficial para ERP NEXUS
+# Nexus — CLI de Bootstrap y Deploy para ERP Nexus
 
-CLI minimalista para crear, validar e instalar componentes ERP NEXUS.
+Herramienta CLI para instalar, configurar y desplegar el ERP Nexus en servidores.
 
-## ✨ Características
+No es el ERP — es lo que te ayuda a ponerlo en marcha.
 
-- **Startup < 150ms** - experiencia instantánea
-- **100% offline** - sin dependencia de internet
-- **Zero ejecución de código** - validación segura con AST parser
-- **Solo 3 dependencias** - máximo 1.1MB de footprint
-- **Rollback automático** - instalaciones transaccionales garantizadas
+## ¿Qué hace?
 
-## 🚀 Instalación
+- **`nexus init`** — Crea un proyecto ERP nuevo (como `django-admin startproject`)
+- **`nexus server`** — Configura y controla el servidor (uvicorn/gunicorn/nginx)
+- **`nexus update`** — Actualiza el core ERP a la última versión
+- **`nexus doctor`** — Verifica que tu entorno esté listo
+
+## Instalación
 
 ```bash
-# Con uv (recomendado)
-uv pip install nexus
-
-# Con pip
 pip install nexus
 ```
 
-## 🧪 Ejemplos de Uso
+## Flujo típico
 
-### Crear un módulo hotelero mínimo
 ```bash
-nexus create hotel_reservations --type=module
-```
-Genera:
-```
-hotel_reservations/
-├── __meta__.py          # 7 campos obligatorios válidos
-├── __init__.py
-└── core/
-    ├── __init__.py
-    └── models.py
+# 1. Crear un proyecto ERP nuevo
+nexus init mi-empresa-erp
+cd mi-empresa-erp
+
+# 2. Configurar base de datos y migrar
+python manage.py migrate
+python manage.py createsuperadmin --username admin --email admin@mi.com --password secret
+
+# 3. Configurar servidor de producción
+nexus server setup --env production
+nexus server start
+
+# 4. Actualizar cuando haya nueva versión
+nexus update
 ```
 
-### Validar inmediatamente
+## Comandos
+
+| Comando | Descripción |
+|---|---|
+| `nexus init <nombre>` | Crea un proyecto ERP nuevo |
+| `nexus server setup` | Genera configs nginx/gunicorn/systemd |
+| `nexus server start` | Arranca el servidor |
+| `nexus server stop` | Detiene el servidor |
+| `nexus server restart` | Reinicia el servidor |
+| `nexus update` | Actualiza el core ERP |
+| `nexus doctor` | Verifica dependencias del sistema |
+
+## Gestión de módulos
+
+Los módulos se gestionan **dentro del ERP** con Django management commands:
+
 ```bash
-nexus validate hotel_reservations
+# Dentro de tu proyecto ERP:
+python manage.py install_module ./mi_modulo
+python manage.py uninstall_module mi_modulo
+python manage.py update_module mi_modulo
+python manage.py module list
+python manage.py catalog search --category accounting
 ```
 
-Salida esperada:
-```
-✅ VÁLIDO: hotel_reservations v0.1.0
-Technical Name  hotel_reservations
-Display Name    Hotel Reservations
-Component Type  module
-Package Type    extension
-Python          >=3.11
-ERP Version     >=0.1.0
+## Crear módulos
 
-✓ El componente es válido y puede instalarse
-```
+Para crear módulos, usa el **SDK Nexus** (dev toolkit):
 
-### Crear extensión reutilizable (modo minimal)
 ```bash
-nexus create validation_dni_ec --type=module --minimal
-```
-Genera solo:
-```
-validation_dni_ec/
-└── __meta__.py          # Sin estructura de directorios (solo metadata)
+pip install sdk-nexus
+sdk-nexus create mi_modulo --type=module
+sdk-nexus validate ./mi_modulo
+sdk-nexus package ./mi_modulo
 ```
 
-### Instalar directamente en el ERP
-Instala módulos en `erp-nexus/modules` y luego sincroniza en el ERP:
-```bash
-nexus install ./mi_modulo --target erp
-```
-Luego en el ERP:
-```bash
-uv run python manage.py sync_modules
-```
+## Licencia
 
-## 🔒 Seguridad Garantizada
-El CLI nunca ejecuta código de `__meta__.py`. Usa el AST parser seguro del SDK:
-- ✅ Solo extrae literales (strings, números, booleanos, listas/dict de literales)
-- ✅ Rechaza funciones, imports, f-strings y expresiones complejas
-- ✅ Validación Pydantic después del parseo (no antes)
-- ✅ Zero riesgo de código malicioso
-
-## ⚡ Eficiencia
-| Métrica | Valor |
-|---------|-------|
-| Startup time | < 150ms |
-| Tamaño instalación | 1.1 MB |
-| Memoria en idle | 28 MB |
-| Tiempo crear módulo | 1.2 segundos |
-| Tiempo validación | 80ms |
-
-## 📚 Próximos Comandos (Fase 1C)
-Comandos disponibles:
-- `nexus install` - Instalación con rollback transaccional
-- `nexus uninstall` - Desinstalación limpia
-- `nexus list` - Listar componentes instalados
-- `nexus info` - Ver detalles de un componente instalado
-- `nexus registry export` - Exportar registry local a JSON
-- `nexus registry import` - Importar registry desde JSON
-- `nexus registry add` - Registrar un catálogo
-- `nexus registry list` - Listar catálogos
-- `nexus registry remove` - Eliminar catálogo
-- `nexus registry set-default` - Establecer catálogo por defecto
-
-Opciones útiles:
-- `nexus install --dry-run` - Muestra el plan de instalación sin ejecutar cambios
-- `nexus install --target erp` - Atajo para instalar en `erp-nexus/modules`
-
-## 🧭 Catálogo (registry)
-Puedes consultar un catálogo local o remoto (URL):
-```bash
-nexus catalog list --source C:/ruta/catalog.json
-nexus catalog info core_auth --source C:/ruta/catalog.json
-nexus catalog update --output C:/ruta/catalog.json
-```
-
-Instalar desde catálogo (paquete local):
-```bash
-nexus install catalog:core_auth --catalog-source C:/ruta/catalog.json --package core_auth=C:/ruta/paquete
-```
-
-Instalar descargando desde `source` (zip/tar):
-```bash
-nexus install catalog:core_auth --catalog-source C:/ruta/catalog.json
-```
-
-Formato esperado (versión B):
-```json
-{
-  "items": [
-    {
-      "technical_name": "core_auth",
-      "description": "Auth core",
-      "versions": [
-        { "version": "0.1.0", "source": "https://..." }
-      ]
-    }
-  ]
-}
-```
-
-## ⚙️ Configuración local
-Archivo opcional:
-`~/.nexus/config.json`
-```json
-{
-  "base_path": "C:/Users/tu_usuario/.nexus/components"
-}
-```
-
-## 📦 Registry de catálogos
-Puedes registrar catálogos remotos o locales:
-```bash
-nexus registry add --name default --type file --source C:/ruta/catalog.json --default
-nexus registry list
-nexus catalog list --registry default
-```
+GPL-3.0-or-later
