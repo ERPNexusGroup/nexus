@@ -1,4 +1,4 @@
-"""CLI oficial para ERP NEXUS"""
-__version__ = "0.1.0"
-__author__ = "ERP NEXUS Team"
-__license__ = "GPL-3.0-or-later"
+"""
+Nexus — CLI de Bootstrap y Deploy para ERP Nexus.
+"""
+__version__ = "0.2.0"

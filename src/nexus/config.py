@@ -1,26 +1,50 @@
-from __future__ import annotations
+"""
+Configuración del proyecto ERP Nexus.
 
-import json
+Lee y escribe .env y config local del proyecto.
+"""
 import os
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
-@dataclass(frozen=True)
-class NexusConfig:
-    base_path: Path
-
-
-def load_config() -> NexusConfig:
+class ProjectConfig:
     """
-    Carga configuración local desde ~/.nexus/config.json.
+    Configuración del proyecto ERP Nexus actual.
     """
-    base_path = Path.home() / ".nexus" / "components"
-    config_path = Path.home() / ".nexus" / "config.json"
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-            base_path = Path(data.get("base_path", str(base_path)))
-        except json.JSONDecodeError:
-            pass
-    return NexusConfig(base_path=base_path)
+
+    def __init__(self, project_dir: Optional[Path] = None):
+        self.project_dir = project_dir or Path.cwd()
+        self.env_file = self.project_dir / ".env"
+
+    @property
+    def is_erp_project(self) -> bool:
+        return (self.project_dir / "manage.py").exists()
+
+    @property
+    def modules_dir(self) -> Path:
+        return self.project_dir / "modules"
+
+    @property
+    def settings_module(self) -> str:
+        env = os.environ.get("DJANGO_SETTINGS_MODULE", "")
+        if env:
+            return env
+        return "erp_nexus.settings.development"
+
+    def get_env(self, key: str, default: str = "") -> str:
+        """Lee variable del .env o del entorno."""
+        value = os.environ.get(key)
+        if value:
+            return value
+
+        if self.env_file.exists():
+            for line in self.env_file.read_text().split("\n"):
+                line = line.strip()
+                if line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip() == key:
+                    return v.strip().strip('"').strip("'")
+
+        return default
