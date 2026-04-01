@@ -17,6 +17,7 @@ nexus = "nexus.cli:cli"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "ruff>=0.4.0",
 ]
 
 [build-system]
